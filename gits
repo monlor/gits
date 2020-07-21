@@ -1,8 +1,11 @@
 #!/bin/bash
 
 # 不支持多仓库
-# 全局变量GIT_REPO_TO_USERS用于映射仓库和用户信息，仓库信息支持模糊
-# GIT_REPO_TO_USERS='git@github.com:monlor,monlor,monlor@qq.com git@github.com:xxx,xxx,xxx@qq.com'
+# 全局变量GIT_REPO_TO_USERS用于映射仓库和用户信息，仓库信息支持模糊，匹配不到时使用全局配置
+# GIT_REPO_TO_USERS=(
+# git@github.com:monlor,monlor,monlor@qq.com 
+# git@github.com:xxx,xxx,xxx@qq.com
+# )
 # GITHUB_TOKEN=''
 # 生命周期函数：gits_before_commit msg path, gits_before_tag tag_name, gits_on_start branch extra
 # git生命周期函数配置文件路径默认为：~/.gits/config，缓存文件默认路径：~/.gits/cache
@@ -19,7 +22,6 @@ PROJECT_GROUP_NAME=""
 LATEST_COMMIT_MSG=""
 
 GITS_PATH=${GITS_PATH:-~/.gits}
-[ -f "${GITS_PATH}/config" ] && source ${GITS_PATH}/config
 
 init_gits() {
 
@@ -35,9 +37,9 @@ init_gits() {
 
 	CUR_BRANCH=`git branch | awk '/^\*/{print$2}'`
 
-	GIT_USER_NAME=`git config --local --get user.name`
+	GIT_USER_NAME=`git config --get user.name`
 
-	GIT_USER_EMAIL=`git config --local --get user.email`
+	GIT_USER_EMAIL=`git config --get user.email`
 
 	GIT_REPO_URL=`git remote -v | awk '{print$2}' | head -1`
 
@@ -45,11 +47,14 @@ init_gits() {
 
 	PROJECT_GROUP_NAME=$(echo ${GIT_REPO_URL} | grep -Eo '[:/]([^./]+/){1,}' | sed -e 's/^[:/]//' -e 's/\/$//')
 
-	LATEST_COMMIT_MSG=$(git log -1 --pretty=%B &> /dev/null)
+	LATEST_COMMIT_MSG=$(git log -1 --pretty=%B 2> /dev/null)
 
-	local git_repo_url=""
-	local git_user_name=""
-	local git_user_email=""
+	# 加载脚本配置文件，配置文件可定义生命周期函数，也可以重新定义全局变量
+	[ -f "${GITS_PATH}/config" ] && source ${GITS_PATH}/config
+
+	local git_repo_url
+	local git_user_name
+	local git_user_email
 
 	for GIT_REPO_TO_USER in ${GIT_REPO_TO_USERS[@]}; do
 		[ -z "${GIT_REPO_TO_USER}" ] && continue
@@ -158,7 +163,7 @@ gitlab_handle() {
 	local assignee_name="${3}"
 	# 空值转换
 	[ -z "${target_branch}" ] && echo "target_branch cant not be null!" && help_handle
-	[ "${title}" = "nil" ] && title="${LATEST_COMMIT_MSG}"
+	[ "${title}" = "nil" -o -z "${title}" ] && title="${LATEST_COMMIT_MSG}"
 	[ "${assignee_name}" = "nil" ] && assignee_name=""
 	
 	# 获取项目id
@@ -235,16 +240,16 @@ help_handle() {
 Gits commands support:
     commit    auto add tapd message
     start     select task and create new branch or checkout branch
-    cp        commit and push to origin
-    tp        tag and push to origin
+    cap       commit and push to origin
+    tap       tag and push to origin
     gl        create a merge request in gitlab
     ass       one key to commit, push and create a merge request for your current code
 
 Commands usage:
     commit    gits commit <msg> [path]
     start     gits start <branch_name> [other_params]
-    cp        gits cp <msg> [path]
-    tp        gits tp [tag_name]
+    cap       gits cp <msg> [path]
+    tap       gits tp [tag_name]
     gl        gits gitlab <merge to branch> [merge message] [merge assign person]
     ass       git assis <merge to branch> [merge or commit message] [merge assign person] [commit path]
 ===================================================
@@ -307,11 +312,11 @@ main() {
 
 		"commit") commit_handle "$@" ;;
 
-		"cp") push_branch_handle "$@" ;;
+		"cap") push_branch_handle "$@" ;;
 
 		"tag") tag_handle "$@" ;;
 
-		"tp") push_tag_handle "$@" ;;
+		"tap") push_tag_handle "$@" ;;
 
 		"start") start_handle "$@" ;;
 
