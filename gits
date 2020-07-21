@@ -1,0 +1,333 @@
+#!/bin/bash
+
+# 不支持多仓库
+# 全局变量GIT_REPO_TO_USERS用于映射仓库和用户信息，仓库信息支持模糊
+# GIT_REPO_TO_USERS='git@github.com:monlor,monlor,monlor@qq.com git@github.com:xxx,xxx,xxx@qq.com'
+# GITHUB_TOKEN=''
+# 生命周期函数：gits_before_commit msg path, gits_before_tag tag_name, gits_on_start branch extra
+# git生命周期函数配置文件路径默认为：~/.gits/config，缓存文件默认路径：~/.gits/cache
+
+VERSION="0.0.1"
+NOW_DATE="$(date "+%Y%m%d%H%M%S")"
+CUR_BRANCH=""
+GIT_USER_NAME=""
+GIT_USER_EMAIL=""
+GIT_REPO_URL=""
+PROJECT_NAME=""
+PROJECT_GROUP_NAME=""
+LATEST_COMMIT_MSG=""
+
+GITS_PATH=${GITS_PATH:-~/.gits}
+[ -f "${GITS_PATH}/config" ] && source ${GITS_PATH}/config
+
+init_gits() {
+
+  # 不是git项目则退出
+	! git status &> /dev/null && help_handle
+
+	if [ ! -d "${GITS_PATH}" ]; then
+		echo "init gits file: ${GITS_PATH}/config, ${GITS_PATH}/cache"
+		mkdir -p "${GITS_PATH}"
+		touch ${GITS_PATH}/config
+		touch ${GITS_PATH}/cache
+	fi
+
+	CUR_BRANCH=`git branch | awk '/^\*/{print$2}'`
+
+	GIT_USER_NAME=`git config --local --get user.name`
+
+	GIT_USER_EMAIL=`git config --local --get user.email`
+
+	GIT_REPO_URL=`git remote -v | awk '{print$2}' | head -1`
+
+	PROJECT_NAME=$(echo ${GIT_REPO_URL} | awk -F '/' '{print$NF}' | sed -e 's/.git//g')
+
+	PROJECT_GROUP_NAME=$(echo ${GIT_REPO_URL} | grep -Eo '[:/]([^./]+/){1,}' | sed -e 's/^[:/]//' -e 's/\/$//')
+
+	LATEST_COMMIT_MSG=$(git log -1 --pretty=%B &> /dev/null)
+
+	local git_repo_url=""
+	local git_user_name=""
+	local git_user_email=""
+
+	for GIT_REPO_TO_USER in ${GIT_REPO_TO_USERS[@]}; do
+		[ -z "${GIT_REPO_TO_USER}" ] && continue
+		git_repo_url=`echo ${GIT_REPO_TO_USER} | cut -d',' -f1`
+		git_user_name=`echo ${GIT_REPO_TO_USER} | cut -d',' -f2`
+		git_user_email=`echo ${GIT_REPO_TO_USER} | cut -d',' -f3`
+		if [[ "${GIT_REPO_URL}" =~ "${git_repo_url}" ]]; then
+			GIT_USER_NAME="${git_user_name}"
+			GIT_USER_EMAIL="${git_user_email}"
+		fi
+	done
+	
+	if [ -n "${GIT_USER_NAME}" ]; then
+		git config --local user.name "${GIT_USER_NAME}" 
+		git config --local user.email "${GIT_USER_EMAIL}" 
+	fi
+
+	echo "> git $@"
+	echo "> user: ${GIT_USER_NAME}"
+	echo "> email: ${GIT_USER_EMAIL}"
+	echo "> gitrepo: ${GIT_REPO_URL}"
+
+}
+
+# msg path
+commit_handle() {
+
+	local commit_msg="${1}"
+	local commit_path="${2}"
+	# 清除系统自动生产的文件
+	find . -name '.DS_Store' | xargs rm -rf
+	type gits_before_commit &> /dev/null && echo "gits_before_commit detected!" && gits_before_commit "$@"
+	# begin to push
+	git add "${commit_path:-.}"
+	git commit -m "${commit_msg:-${NOW_DATE}}"
+
+}
+
+# msg path
+push_branch_handle() {
+
+	commit_handle "$@"
+
+	git push ${GIT_REPO_URL} ${CUR_BRANCH}
+
+}
+
+# tag_name
+tag_handle() {
+	
+	local tag_name="${1:-${NOW_DATE}}"
+
+	type gits_before_tag &> /dev/null && echo "gits_before_tag detected!" && gits_before_tag "$@"
+
+	# git tag ${tag_name}
+
+	echo "tag: ${tag_name}"
+
+}
+
+# tag_name
+push_tag_handle() {
+
+	local tag_name="$(tag_handle "$@")"
+
+	echo "tag: ${tag_name}"
+	
+	git push ${GIT_REPO_URL} ${tag_name}
+
+}
+
+# branch_name
+start_handle() {
+
+	local branch_name="${1}"
+
+	[ -z "${branch_name}" ] && help_handle
+
+	git checkout -b "${branch_name}"
+
+	type gits_on_start &> /dev/null && echo "gits_on_start detected!" && gits_on_start "$@"
+
+}
+
+urlencode() {
+  local length="${#1}"
+  for (( i = 0; i < length; i++ )); do
+    local c="${1:i:1}"
+    case $c in
+      [a-zA-Z0-9.~_-]) echo -n "$c" ;;
+    *) echo -n "$c" | xxd -p -c1 | while read x;do echo -n "%$x";done
+  esac
+done
+}
+
+# branch msg person
+gitlab_handle() {
+
+	[ -z "${GITLAB_URL}" ] && echo "GITLAB_URL is not found！" && help_handle
+	[ -z "${GITLAB_TOKEN}" ] && echo "GITLAB_TOKEN is not found！" && help_handle
+	local api_url=$GITLAB_URL/api/v4
+	local assignee_id
+
+	local target_branch="${1}"
+	local title="${2}"
+	local assignee_name="${3}"
+	# 空值转换
+	[ -z "${target_branch}" ] && echo "target_branch cant not be null!" && help_handle
+	[ "${title}" = "nil" ] && title="${LATEST_COMMIT_MSG}"
+	[ "${assignee_name}" = "nil" ] && assignee_name=""
+	
+	# 获取项目id
+	local project_id=`curl --header \
+    "Private-Token: ${GITLAB_TOKEN}" \
+    $api_url/projects?search=${PROJECT_NAME} 2>/dev/null | grep -Eo '"id":[^{}]*"'${PROJECT_GROUP_NAME}'/'${PROJECT_NAME}'"' | grep -Eo '"id":[0-9]+' | head -1 | cut -d':' -f2`
+	[ -z "${project_id}" ] && echo "get project id failed!"
+	if [ -n "${assignee_name}" ]; then
+		assignee_id=`curl --header \
+			"PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+			${api_url}/users?search=${assignee_name} 2> /dev/null | grep -Eo '"id":[0-9]+' | head -1 | cut -d':' -f2`
+	fi
+	# 检查目标分支是否存在
+	local result=$(curl --header \
+    "Private-Token: ${GITLAB_TOKEN}" \
+    ${api_url}/projects/${PROJECT_NAME}/repository/branches/${target_branch} 2> /dev/null | grep "404 Branch Not Found")
+	[ -n "${result}" ] && echo "target branch ${target_branch} is not exists!" && return
+	# 提交合并请求
+	title=$(urlencode "${title}")
+  local data="source_branch=${CUR_BRANCH}&target_branch=${target_branch}&assignee_id=${assignee_id}&title=${title}"
+  local merge_request_res=`curl --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+    --data $data \
+    "${api_url}/projects/${project_id}/merge_requests" 2>/dev/null`
+	local merge_request_id=$(echo ${merge_request_res} | grep -Eo '"iid":[0-9]+' | head -1 | cut -d':' -f2)
+	echo "Create merge request success! The merge_request_id is $merge_request_id"
+	echo "The merge request url is ${GITLAB_URL}/${PROJECT_GROUP_NAME}/${PROJECT_NAME}/merge_requests/${merge_request_id}/diffs"
+
+}
+
+# 提交代码并提合并请求
+# branch msg person path
+assistant_handle() {
+
+	local branch=${1}
+	local msg=${2}
+	local person=${3}
+	local path=${4}
+	[ "${msg}" = "nil" ] && msg=""
+	[ "${person}" = "nil" ] && person=""
+	[ "${path}" = "nil" ] && path=""
+
+	push_branch_handle "${2}" "${4}"
+
+	gitlab_handle "${1}" "${2}" "${3}"
+
+}
+
+# github版本发布
+release_handle() {
+	[ -z "$1" ] && help_handle
+	local tmpdir=$(mktemp -d)
+	github-release release \
+    --user ${GIT_USER_NAME} \
+    --repo ${PROJECT_NAME} \
+    --tag $1 \
+    --name $1 &> /dev/null
+  [ $? -ne 0 ] && echo "发布版本失败，网络错误或已存在该版本！" && return
+  echo "https://github.com/${GIT_USER_NAME}/${PROJECT_NAME}/archive/${1}.tar.gz"
+  curl -sLo ${tmpdir}/${1}.tar.gz https://github.com/${GIT_USER_NAME}/${PROJECT_NAME}/archive/${1}.tar.gz
+  if [ $? -eq 0 ]; then
+		(hash sha256sum &> /dev/null && sha256sum ${tmpdir}/${1}.tar.gz || shasum -a 256 ${tmpdir}/${1}.tar.gz) | awk '{print$1}'
+	else
+		echo "下载源代码失败！"
+	fi
+	rm -rf ${tmpdir}
+}
+
+help_handle() {
+
+	git --help
+
+	cat << EOF
+===================================================
+Gits commands support:
+    commit    auto add tapd message
+    start     select task and create new branch or checkout branch
+    cp        commit and push to origin
+    tp        tag and push to origin
+    gl        create a merge request in gitlab
+    ass       one key to commit, push and create a merge request for your current code
+
+Commands usage:
+    commit    gits commit <msg> [path]
+    start     gits start <branch_name> [other_params]
+    cp        gits cp <msg> [path]
+    tp        gits tp [tag_name]
+    gl        gits gitlab <merge to branch> [merge message] [merge assign person]
+    ass       git assis <merge to branch> [merge or commit message] [merge assign person] [commit path]
+===================================================
+EOF
+	exit
+
+}
+
+show_version() {
+	git --version
+	echo "gits version: ${VERSION}"
+}
+
+cache() {
+
+	[ -z "${GIT_REPO_URL}" ] && return
+	local unique="$(echo "${GIT_REPO_URL}" | base64 | tr -d '\n')"
+	local cache_file="${GITS_PATH}/cache"
+	local key="$2"
+	local value="$(echo "${3}" | base64 | tr -d '\n')"
+	local sep="|"
+	[ ! -f "${cache_file}" ] && touch "${cache_file}"
+	[ -z "${key}" ] && return
+
+	case "$1" in
+	"set") 
+		if [ `uname -o` = "Darwin" ]; then
+			sed -i "" "/^${unique}${sep}${key}/d" "${cache_file}"
+		else
+			sed -i "/^${unique}${sep}${key}/d" "${cache_file}"
+		fi
+		echo "${unique}${sep}${key}${sep}${value}" >> "${cache_file}"
+		;;
+	"get")
+		line="$(cat "${cache_file}" | grep "${unique}${sep}${key}")"
+		echo -n "$(echo "${line}" | cut -d"${sep}" -f3 | base64 -d)"
+		;;
+	"del")
+		if [ `uname -o` = "Darwin" ]; then
+			sed -i "" "/^${unique}${sep}${key}/d" "${cache_file}"
+		else
+			sed -i "/^${unique}${sep}${key}/d" "${cache_file}"
+		fi
+		;;
+	esac
+
+}
+
+main() {
+
+	opt="$1"
+
+	[ -z "${opt}" ] && help_handle
+
+	git status &> /dev/null && init_gits "$@"
+
+	shift 1
+
+	case "${opt}" in
+
+		"commit") commit_handle "$@" ;;
+
+		"cp") push_branch_handle "$@" ;;
+
+		"tag") tag_handle "$@" ;;
+
+		"tp") push_tag_handle "$@" ;;
+
+		"start") start_handle "$@" ;;
+
+		"gl") gitlab_handle "$@" ;;
+
+		"ass") assistant_handle "$@" ;;
+
+		"release") release_handle "$@" ;;
+
+		"--help") help_handle ;;
+
+		"--version") show_version ;;
+
+		*) eval "git ${opt} $@" ;;
+
+	esac
+
+}
+
+main "$@"
