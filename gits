@@ -109,7 +109,7 @@ tag_handle() {
 
 	type gits_before_tag &> /dev/null && echo "gits_before_tag detected!" && gits_before_tag "$@"
 
-	# git tag ${tag_name}
+	git tag ${tag_name}
 
 	echo "tag: ${tag_name}"
 
