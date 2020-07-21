@@ -8,7 +8,8 @@
 # git生命周期函数配置文件路径默认为：~/.gits/config，缓存文件默认路径：~/.gits/cache
 
 VERSION="0.0.1"
-NOW_DATE="$(date "+%Y%m%d%H%M%S")"
+NOW_DATE="$(date "+%Y-%m-%d %H:%M:%S")"
+NOW_DATE_NUM="$(date "+%Y%m%d%H%M%S")"
 CUR_BRANCH=""
 GIT_USER_NAME=""
 GIT_USER_EMAIL=""
@@ -99,7 +100,7 @@ push_branch_handle() {
 # tag_name
 tag_handle() {
 	
-	local tag_name="${1:-${NOW_DATE}}"
+	local tag_name="${1:-${NOW_DATE_NUM}}"
 
 	type gits_before_tag &> /dev/null && echo "gits_before_tag detected!" && gits_before_tag "$@"
 
