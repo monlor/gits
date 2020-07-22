@@ -1,5 +1,5 @@
 #!/bin/bash
-
+source helper
 # 不支持多仓库
 # 全局变量GIT_REPO_TO_USERS用于映射仓库和用户信息，仓库信息支持模糊，匹配不到时使用全局配置
 # GIT_REPO_TO_USERS=(
@@ -9,7 +9,6 @@
 # GITHUB_TOKEN=''
 # 生命周期函数：gits_before_commit msg path, gits_before_tag tag_name, gits_on_start branch extra
 # git生命周期函数配置文件路径默认为：~/.gits/config，缓存文件默认路径：~/.gits/cache
-
 VERSION="0.0.2"
 NOW_DATE="$(date "+%Y-%m-%d %H:%M:%S")"
 NOW_DATE_NUM="$(date "+%Y%m%d%H%M%S")"
@@ -20,8 +19,10 @@ GIT_REPO_URL=""
 PROJECT_NAME=""
 PROJECT_GROUP_NAME=""
 LATEST_COMMIT_MSG=""
+CACHE_UNIQUE=""
 
 GITS_PATH=${GITS_PATH:-~/.gits}
+CACHE_FILE="${GITS_PATH}/cache"
 
 init_gits() {
 
@@ -48,6 +49,8 @@ init_gits() {
 	PROJECT_GROUP_NAME=$(echo ${GIT_REPO_URL} | grep -Eo '[:/]([^./]+/){1,}' | sed -e 's/^[:/]//' -e 's/\/$//')
 
 	LATEST_COMMIT_MSG=$(git log -1 --pretty=%B 2> /dev/null)
+
+	CACHE_UNIQUE="${GIT_REPO_URL}"
 
 	# 加载脚本配置文件，配置文件可定义生命周期函数，也可以重新定义全局变量
 	[ -f "${GITS_PATH}/config" ] && source ${GITS_PATH}/config
@@ -83,12 +86,12 @@ init_gits() {
 commit_handle() {
 
 	local commit_msg="${1}"
-	local commit_path="${2}"
+	shift 1
 	# 清除系统自动生产的文件
 	find . -name '.DS_Store' | xargs rm -rf
 	type gits_before_commit &> /dev/null && echo "gits_before_commit detected!" && gits_before_commit "$@"
 	# begin to push
-	git add "${commit_path:-.}"
+	git add ${@:-.}
 	git commit -m "${commit_msg:-${NOW_DATE}}"
 
 }
@@ -200,14 +203,13 @@ assistant_handle() {
 	local branch=${1}
 	local msg=${2}
 	local person=${3}
-	local path=${4}
+	shift 3
 	[ "${msg}" = "nil" ] && msg=""
 	[ "${person}" = "nil" ] && person=""
-	[ "${path}" = "nil" ] && path=""
 
-	push_branch_handle "${2}" "${4}"
+	push_branch_handle "${msg}" "$@"
 
-	gitlab_handle "${1}" "${2}" "${3}"
+	gitlab_handle "${branch}" "${msg}" "${person}"
 
 }
 
@@ -244,14 +246,16 @@ Gits commands support:
     tap       tag and push to origin
     gl        create a merge request in gitlab
     ass       git assist, one key to commit, push and create a merge request for your current branch
+		release   release github
 
 Commands usage:
     commit    gits commit <msg> [path]
     start     gits start <branch_name> [other_params]
-    cap       gits cp <msg> [path]
-    tap       gits tp [tag_name]
-    gl        gits gitlab <merge to branch> [merge message] [merge assign person]
-    ass       git ass <merge to branch> [merge or commit message] [merge assign person] [commit path]
+    cap       gits cap <msg> [path]
+    tap       gits tap [tag_name]
+    gl        gits gl <merge to branch> [merge message] [merge assign person]
+    ass       gits ass <merge to branch> [merge or commit message] [merge assign person] [commit path]\
+		release   gits release <version>
 ===================================================
 EOF
 	exit
@@ -261,41 +265,6 @@ EOF
 show_version() {
 	git --version
 	echo "gits version: ${VERSION}"
-}
-
-cache() {
-
-	[ -z "${GIT_REPO_URL}" ] && return
-	local unique="$(echo "${GIT_REPO_URL}" | base64 | tr -d '\n')"
-	local cache_file="${GITS_PATH}/cache"
-	local key="$2"
-	local value="$(echo "${3}" | base64 | tr -d '\n')"
-	local sep="|"
-	[ ! -f "${cache_file}" ] && touch "${cache_file}"
-	[ -z "${key}" ] && return
-
-	case "$1" in
-	"set") 
-		if [ `uname -o` = "Darwin" ]; then
-			sed -i "" "/^${unique}${sep}${key}/d" "${cache_file}"
-		else
-			sed -i "/^${unique}${sep}${key}/d" "${cache_file}"
-		fi
-		echo "${unique}${sep}${key}${sep}${value}" >> "${cache_file}"
-		;;
-	"get")
-		line="$(cat "${cache_file}" | grep "${unique}${sep}${key}")"
-		echo -n "$(echo "${line}" | cut -d"${sep}" -f3 | base64 -d)"
-		;;
-	"del")
-		if [ `uname -o` = "Darwin" ]; then
-			sed -i "" "/^${unique}${sep}${key}/d" "${cache_file}"
-		else
-			sed -i "/^${unique}${sep}${key}/d" "${cache_file}"
-		fi
-		;;
-	esac
-
 }
 
 main() {
