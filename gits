@@ -239,8 +239,9 @@ help_handle() {
 	cat << EOF
 ===================================================
 Gits commands support:
-    commit    auto add tapd message
-    start     select task and create new branch or checkout branch
+    commit    easy to commit, use gits_before_commit to customize your commit
+		tag 		  easy to tag, use gits_before_tag to customize your tag
+    start     checkout branch, use gits_on_start to customize your start
     cap       commit and push to origin
     tap       tag and push to origin
     gl        create a merge request in gitlab
