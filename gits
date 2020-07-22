@@ -225,7 +225,7 @@ release_handle() {
   echo "https://github.com/${GIT_USER_NAME}/${PROJECT_NAME}/archive/${1}.tar.gz"
   curl -sLo ${tmpdir}/${1}.tar.gz https://github.com/${GIT_USER_NAME}/${PROJECT_NAME}/archive/${1}.tar.gz
   if [ $? -eq 0 ]; then
-		(hash sha256sum &> /dev/null && sha256sum ${tmpdir}/${1}.tar.gz || shasum -a 256 ${tmpdir}/${1}.tar.gz) | awk '{print$1}'
+		sha256sh ${tmpdir}/${1}.tar.gz
 	else
 		echo "下载源代码失败！"
 	fi
