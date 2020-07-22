@@ -9,7 +9,7 @@ source helper
 # GITHUB_TOKEN=''
 # 生命周期函数：gits_before_commit msg path, gits_before_tag tag_name, gits_on_start branch extra
 # git生命周期函数配置文件路径默认为：~/.gits/config，缓存文件默认路径：~/.gits/cache
-VERSION="0.0.3"
+VERSION="0.0.4"
 NOW_DATE="$(date "+%Y-%m-%d %H:%M:%S")"
 NOW_DATE_NUM="$(date "+%Y%m%d%H%M%S")"
 CUR_BRANCH=""
