@@ -86,10 +86,10 @@ init_gits() {
 commit_handle() {
 
 	local commit_msg="${1}"
-	shift 1
 	# 清除系统自动生产的文件
 	find . -name '.DS_Store' | xargs rm -rf
 	type gits_before_commit &> /dev/null && echo "gits_before_commit detected!" && gits_before_commit "$@"
+	shift 1
 	# begin to push
 	git add ${@:-.}
 	git commit -m "${commit_msg:-${NOW_DATE}}"
