@@ -75,7 +75,7 @@ init_gits() {
 		git config --local user.email "${GIT_USER_EMAIL}" 
 	fi
 
-	echo "> git $@"
+	echo "> gits $@"
 	echo "> user: ${GIT_USER_NAME}"
 	echo "> email: ${GIT_USER_EMAIL}"
 	echo "> gitrepo: ${GIT_REPO_URL}"
