@@ -6,9 +6,9 @@ source helper
 # git@github.com:xxx,xxx,xxx@qq.com
 # )
 # GITHUB_TOKEN=''
-# 生命周期函数：gits_before_commit msg path, gits_before_tag tag_name, gits_on_start branch extra
+# 生命周期函数：gits_on_init, gits_before_commit msg path, gits_before_tag tag_name, gits_on_start branch extra
 # git生命周期函数配置文件路径默认为：~/.gits/config，缓存文件默认路径：~/.gits/cache
-VERSION="0.0.6"
+VERSION="0.0.7"
 NOW_DATE="$(date "+%Y-%m-%d %H:%M:%S")"
 NOW_DATE_NUM="$(date "+%Y%m%d%H%M%S")"
 CUR_BRANCH=""
@@ -19,6 +19,8 @@ PROJECT_NAME=""
 PROJECT_GROUP_NAME=""
 LATEST_COMMIT_MSG=""
 CACHE_UNIQUE=""
+# 此变量用于保存tag名称或msg等被特殊处理的值
+GLOBAL_VAR=""
 
 GITS_PATH=${GITS_PATH:-~/.gits}
 CACHE_FILE="${GITS_PATH}/cache"
@@ -78,6 +80,7 @@ init_gits() {
 	echo "> user: ${GIT_USER_NAME}"
 	echo "> email: ${GIT_USER_EMAIL}"
 	echo "> gitrepo: ${GIT_REPO_URL}"
+	type gits_on_init &> /dev/null && gits_on_init "$@"
 
 }
 
@@ -85,12 +88,20 @@ init_gits() {
 commit_handle() {
 
 	local commit_msg="${1}"
-	# 清除系统自动生产的文件
-	find . -name '.DS_Store' | xargs rm -rf
-	type gits_before_commit &> /dev/null && echo "gits_before_commit detected!" && gits_before_commit "$@"
+
+	type gits_before_commit &> /dev/null && echo "> gits_before_commit detected!" && gits_before_commit "$@"
+	# 记录msg变更
+	GLOBAL_VAR="${commit_msg}"
+
 	shift 1
+
+	local commit_path=( "$@" )
+
+	echo "> add path: ${commit_path[@]:-.}"
+
 	# begin to push
-	git add ${@:-.}
+	git add ${commit_path[@]:-.}
+
 	git commit -m "${commit_msg:-${NOW_DATE}}"
 
 }
@@ -100,7 +111,7 @@ push_branch_handle() {
 
 	commit_handle "$@"
 
-	git push ${GIT_REPO_URL} ${CUR_BRANCH}
+	git push "${GIT_REPO_URL}" "${CUR_BRANCH}:${CUR_BRANCH}" ${PARAMS}
 
 }
 
@@ -109,22 +120,22 @@ tag_handle() {
 	
 	local tag_name="${1:-${NOW_DATE_NUM}}"
 
-	type gits_before_tag &> /dev/null && echo "gits_before_tag detected!" && gits_before_tag "$@"
+	type gits_before_tag &> /dev/null && echo "> gits_before_tag detected!" && gits_before_tag "$@"
 
-	git tag ${tag_name}
+	GLOBAL_VAR="${tag_name}"
 
-	echo "tag: ${tag_name}"
+	git tag "${tag_name}"
+
+	echo "> ${tag_name}"
 
 }
 
 # tag_name
 push_tag_handle() {
 
-	local tag_name="$(tag_handle "$@")"
+	tag_handle "$@"
 
-	echo "tag: ${tag_name}"
-	
-	git push ${GIT_REPO_URL} ${tag_name}
+	git push "${GIT_REPO_URL}" "${GLOBAL_VAR}" ${PARAMS}
 
 }
 
@@ -137,7 +148,9 @@ start_handle() {
 
 	git checkout -b "${branch_name}"
 
-	type gits_on_start &> /dev/null && echo "gits_on_start detected!" && gits_on_start "$@"
+	[ $? -ne 0 ] && return
+
+	type gits_on_start &> /dev/null && echo "> gits_on_start detected!" && gits_on_start "$@"
 
 }
 
@@ -155,8 +168,7 @@ done
 # branch msg person
 gitlab_handle() {
 
-	[ -z "${GITLAB_URL}" ] && echo "GITLAB_URL is not found！" && help_handle
-	[ -z "${GITLAB_TOKEN}" ] && echo "GITLAB_TOKEN is not found！" && help_handle
+	assert_nil "GITLAB_URL" "GITLAB_TOKEN" && help_handle
 	local api_url=$GITLAB_URL/api/v4
 	local assignee_id
 
@@ -164,34 +176,35 @@ gitlab_handle() {
 	local title="${2}"
 	local assignee_name="${3}"
 	# 空值转换
-	[ -z "${target_branch}" ] && echo "target_branch cant not be null!" && help_handle
+	[ -z "${target_branch}" ] && echo "> target_branch cant not be null!" && help_handle
 	[ "${title}" = "nil" -o -z "${title}" ] && title="${LATEST_COMMIT_MSG}"
 	[ "${assignee_name}" = "nil" ] && assignee_name=""
 	
 	# 获取项目id
-	local project_id=`curl --header \
-    "Private-Token: ${GITLAB_TOKEN}" \
+	local project_id=`curl -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
     $api_url/projects?search=${PROJECT_NAME} 2>/dev/null | grep -Eo '"id":[^{}]*"'${PROJECT_GROUP_NAME}'/'${PROJECT_NAME}'"' | grep -Eo '"id":[0-9]+' | head -1 | cut -d':' -f2`
-	[ -z "${project_id}" ] && echo "get project id failed!"
+	[ -z "${project_id}" ] && echo "> get project id failed!" && return
 	if [ -n "${assignee_name}" ]; then
-		assignee_id=`curl --header \
-			"PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
+		assignee_id=`curl -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
 			${api_url}/users?search=${assignee_name} 2> /dev/null | grep -Eo '"id":[0-9]+' | head -1 | cut -d':' -f2`
+		echo "> assign person id is $assignee_id"
 	fi
 	# 检查目标分支是否存在
-	local result=$(curl --header \
-    "Private-Token: ${GITLAB_TOKEN}" \
+	local result=$(curl -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
     ${api_url}/projects/${PROJECT_NAME}/repository/branches/${target_branch} 2> /dev/null | grep "404 Branch Not Found")
-	[ -n "${result}" ] && echo "target branch ${target_branch} is not exists!" && return
+	[ -n "${result}" ] && echo "> target branch ${target_branch} is not exists!" && return
 	# 提交合并请求
 	title=$(urlencode "${title}")
   local data="source_branch=${CUR_BRANCH}&target_branch=${target_branch}&assignee_id=${assignee_id}&title=${title}"
-  local merge_request_res=`curl --header "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
-    --data $data \
+  local merge_request_res=`curl -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" --data $data \
     "${api_url}/projects/${project_id}/merge_requests" 2>/dev/null`
 	local merge_request_id=$(echo ${merge_request_res} | grep -Eo '"iid":[0-9]+' | head -1 | cut -d':' -f2)
-	echo "Create merge request success! The merge_request_id is $merge_request_id"
-	echo "The merge request url is ${GITLAB_URL}/${PROJECT_GROUP_NAME}/${PROJECT_NAME}/merge_requests/${merge_request_id}/diffs"
+	if [ -z "${merge_request_id}" ]; then
+		echo "> ${merge_request_res}"
+	else 
+		echo "> create merge request success! The merge_request_id is $merge_request_id"
+		echo "> the merge request url is ${GITLAB_URL}/${PROJECT_GROUP_NAME}/${PROJECT_NAME}/merge_requests/${merge_request_id}/diffs"
+	fi
 
 }
 
@@ -202,13 +215,17 @@ assistant_handle() {
 	local branch=${1}
 	local msg=${2}
 	local person=${3}
-	shift 3
+	local path
+	if [ "$#" -gt 3 ]; then
+		shift 3
+		path=( "$@" )
+	fi
 	[ "${msg}" = "nil" ] && msg=""
 	[ "${person}" = "nil" ] && person=""
 
-	push_branch_handle "${msg}" "$@"
+	push_branch_handle "${msg}" "${path}"
 
-	gitlab_handle "${branch}" "${msg}" "${person}"
+	gitlab_handle "${branch}" "${GLOBAL_VAR}" "${person}"
 
 }
 
@@ -221,15 +238,26 @@ release_handle() {
     --repo ${PROJECT_NAME} \
     --tag $1 \
     --name $1 &> /dev/null
-  [ $? -ne 0 ] && echo "发布版本失败，网络错误或已存在该版本！" && return
+  [ $? -ne 0 ] && echo "> release failed! maybe network error or tag is exists!" && return
   echo "https://github.com/${GIT_USER_NAME}/${PROJECT_NAME}/archive/${1}.tar.gz"
   curl -sLo ${tmpdir}/${1}.tar.gz https://github.com/${GIT_USER_NAME}/${PROJECT_NAME}/archive/${1}.tar.gz
   if [ $? -eq 0 ]; then
 		sha256sh ${tmpdir}/${1}.tar.gz
 	else
-		echo "下载源代码失败！"
+		echo "> download tar failed!"
 	fi
 	rm -rf ${tmpdir}
+}
+
+# 将git项目中的二进制文件安装到bin目录以便测试
+install_handle() {
+	local bin_files=("$@")
+	assert_nil "GITS_INSTALL_DIR" "bin_files" && help_handle
+	chmod +x "${bin_files}"
+	for bin_file in ${bin_files[@]}; do
+		ln -sf "$(get_absolute_path ${bin_file})" "${GITS_INSTALL_DIR}"
+		[ $? -eq 0 ] && echo "success: ${bin_file}" || echo "failed: ${bin_file}"
+	done
 }
 
 help_handle() {
@@ -238,24 +266,27 @@ help_handle() {
 
 	cat << EOF
 ===================================================
+Gits version: ${VERSION}
 Gits commands support:
-    commit    easy to commit, use gits_before_commit to customize your commit
-		tag 		  easy to tag, use gits_before_tag to customize your tag
-    start     checkout branch, use gits_on_start to customize your start
-    cap       commit and push to origin
-    tap       tag and push to origin
-    gl        create a merge request in gitlab
-    ass       git assist, one key to commit, push and create a merge request for your current branch
-		release   release github
+   commit    easy to commit, use gits_before_commit to customize your commit
+   tag       easy to tag, use gits_before_tag to customize your tag
+   start     checkout branch, use gits_on_start to customize your start
+   cap       commit and push to origin
+   tap       tag and push to origin
+   gl        create a merge request in gitlab
+   ass       git assist, one key to commit, push and create a merge request for your current branch
+   release   release github
+   install   install files to your bin dir
 
 Commands usage:
-    commit    gits commit <msg> [path]
-    start     gits start <branch_name> [other_params]
-    cap       gits cap <msg> [path]
-    tap       gits tap [tag_name]
-    gl        gits gl <merge to branch> [merge message] [merge assign person]
-    ass       gits ass <merge to branch> [merge or commit message] [merge assign person] [commit path]\
-		release   gits release <version>
+   commit    gits commit <msg> [path]
+   start     gits start <branch_name> [other_params]
+   cap       gits cap <msg> [path]
+   tap       gits tap [tag_name]
+   gl        gits gl <merge to branch> [merge message] [merge assign person]
+   ass       gits ass <merge to branch> [merge or commit message] [merge assign person] [commit path]
+   release   gits release <version>
+   install   gits install <files>
 ===================================================
 EOF
 	exit
@@ -294,6 +325,8 @@ main() {
 		"ass") assistant_handle "$@" ;;
 
 		"release") release_handle "$@" ;;
+
+		"install") install_handle "$@" ;;
 
 		"--help") help_handle ;;
 
