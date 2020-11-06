@@ -80,7 +80,10 @@ init_gits() {
 	echo "> user: ${GIT_USER_NAME}"
 	echo "> email: ${GIT_USER_EMAIL}"
 	echo "> gitrepo: ${GIT_REPO_URL}"
-	type gits_on_init &> /dev/null && gits_on_init "$@"
+	if type gits_on_init &> /dev/null; then
+		echo "> gits_on_init detected!"
+		gits_on_init "$@" || exit 1
+	fi
 
 }
 
@@ -89,7 +92,12 @@ commit_handle() {
 
 	local commit_msg="${1}"
 
-	type gits_before_commit &> /dev/null && echo "> gits_before_commit detected!" && gits_before_commit "$@"
+	[ "${commit_msg}" = "nil" ] && echo "> msg不能为空！" && return
+
+	if type gits_before_commit &> /dev/null; then
+		echo "> gits_before_commit detected!"
+		gits_before_commit "$@" || exit 1
+	fi
 	# 记录msg变更
 	GLOBAL_VAR="${commit_msg}"
 
@@ -120,7 +128,10 @@ tag_handle() {
 	
 	local tag_name="${1:-${NOW_DATE_NUM}}"
 
-	type gits_before_tag &> /dev/null && echo "> gits_before_tag detected!" && gits_before_tag "$@"
+	if type gits_before_tag &> /dev/null; then
+		echo "> gits_before_tag detected!"
+		gits_before_tag "$@" || exit 1
+	fi
 
 	GLOBAL_VAR="${tag_name}"
 
@@ -146,11 +157,18 @@ start_handle() {
 
 	[ -z "${branch_name}" ] && help_handle
 
-	git checkout -b "${branch_name}"
+	if [ "${branch_name}" != "${CUR_BRANCH}" ]; then
+		git checkout -b "${branch_name}"
+	else 
+		echo "> already at ${branch_name}"
+	fi
 
 	[ $? -ne 0 ] && return
 
-	type gits_on_start &> /dev/null && echo "> gits_on_start detected!" && gits_on_start "$@"
+	if type gits_on_start &> /dev/null; then
+		echo "> gits_on_start detected!"
+		gits_on_start "$@" || exit 1
+	fi
 
 }
 
@@ -187,7 +205,11 @@ gitlab_handle() {
 	if [ -n "${assignee_name}" ]; then
 		assignee_id=`curl -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
 			${api_url}/users?search=${assignee_name} 2> /dev/null | grep -Eo '"id":[0-9]+' | head -1 | cut -d':' -f2`
-		echo "> assign person id is $assignee_id"
+		if [ -z "${assignee_id}" ]; then
+			echo "> get assign person id failed!"
+		else
+			echo "> assign person id is $assignee_id"
+		fi
 	fi
 	# 检查目标分支是否存在
 	local result=$(curl -H "PRIVATE-TOKEN: ${GITLAB_TOKEN}" \
@@ -220,8 +242,6 @@ assistant_handle() {
 		shift 3
 		path=( "$@" )
 	fi
-	[ "${msg}" = "nil" ] && msg=""
-	[ "${person}" = "nil" ] && person=""
 
 	push_branch_handle "${msg}" "${path}"
 
